@@ -1,1 +1,178 @@
-# codigo-completo-simulador
+#include <Joystick.h>
+
+// ---------- CONFIGURAÇÃO DO JOYSTICK ----------
+Joystick_ Joystick(JOYSTICK_DEFAULT_REPORT_ID,
+                   JOYSTICK_TYPE_GAMEPAD,
+                   14, 0,                // 14 botões agora (8 marchas + 5 físicos + ignição)
+                   true, true, true,     // X, Y, Z (pedais)
+                   true, true, false,    // Rx = volante, Ry = freio de mão
+                   false, false,         // sem rudder/throttle
+                   false, false, false); // sem extras
+
+// ---------- CONFIGURAÇÃO DE RANGES ----------
+// Pedais (valores analógicos brutos do Arduino = 0–1023)
+const int pedalMin = 200;
+const int pedalMax = 800;
+
+// Volante (encoder convertido em 0–1023)
+const int wheelMin = 0;
+const int wheelMax = 1023;
+
+// ---------- ENCODER DO VOLANTE ----------
+#define ENCODER_PIN_A 2
+#define ENCODER_PIN_B 3
+volatile long encoderPos = (wheelMax - wheelMin) / 2;
+int lastEncoded = 0;
+
+// ---------- PEDAIS ----------
+#define PEDAL1 A0
+#define PEDAL2 A1
+#define PEDAL3 A2
+
+// ---------- FREIO DE MÃO ----------
+#define HANDBRAKE A5
+const int handbrakeMin = 200;  // ajuste conforme leitura real
+const int handbrakeMax = 800;
+
+// ---------- ALAVANCA DE MARCHA ----------
+const int pinX = A3;
+const int pinY = A4;
+
+// Limites de X e Y para cada marcha
+const int X1_min = 390, X1_max = 480;
+const int Y1_min = 420, Y1_max = 460;
+
+const int X2_min = 390, X2_max = 420;
+const int Y2_min = 520, Y2_max = 560;
+
+const int X3_min = 360, X3_max = 385;
+const int Y3_min = 420, Y3_max = 460;
+
+const int X4_min = 360, X4_max = 396;
+const int Y4_min = 520, Y4_max = 560;
+
+const int X5_min = 345, X5_max = 360;
+const int Y5_min = 420, Y5_max = 460;
+
+const int X6_min = 345, X6_max = 360;
+const int Y6_min = 500, Y6_max = 570;
+
+const int X7_min = 330, X7_max = 345;
+const int Y7_min = 280, Y7_max = 465;
+
+const int XR_min = 330, XR_max = 345;
+const int YR_min = 500, YR_max = 570;
+
+// Debounce câmbio
+const int debounceTime = 50;
+int lastButton = -1;
+unsigned long lastChange = 0;
+
+// ---------- BOTÕES FÍSICOS ----------
+const int buttonPins[5] = {9, 10, 11, 12, 13};
+
+// ---------- IGNIÇÃO ----------
+#define IGNITION_PIN 8
+
+// ---------- SETUP ----------
+void setup() {
+  // Encoder
+  pinMode(ENCODER_PIN_A, INPUT_PULLUP);
+  pinMode(ENCODER_PIN_B, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_A), updateEncoder, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_B), updateEncoder, CHANGE);
+
+  // Botões físicos
+  for (int i = 0; i < 5; i++) {
+    pinMode(buttonPins[i], INPUT_PULLUP); // uso resistor interno
+  }
+
+  // Ignição com pullup
+  pinMode(IGNITION_PIN, INPUT_PULLUP);
+
+  Joystick.begin();
+}
+
+// ---------- LOOP PRINCIPAL ----------
+void loop() {
+  // ---------- LÊ PEDAIS ----------
+  int accelRaw = analogRead(PEDAL1);
+  int brakeRaw = analogRead(PEDAL2);
+  int clutchRaw = analogRead(PEDAL3);
+
+  int accel = map(accelRaw, pedalMin, pedalMax, -3100, 1500);
+  int brake = map(brakeRaw, pedalMin, pedalMax, -2900, 1400);
+  int clutch = map(clutchRaw, pedalMin, pedalMax, -2800, 1400);
+
+  accel = constrain(accel, 0, 1023);
+  brake = constrain(brake, 0, 1023);
+  clutch = constrain(clutch, 0, 1023);
+
+  Joystick.setXAxis(accel);
+  Joystick.setYAxis(brake);
+  Joystick.setZAxis(clutch);
+
+  // ---------- FREIO DE MÃO ----------
+  int handbrakeRaw = analogRead(HANDBRAKE);
+  int handbrake = map(handbrakeRaw, handbrakeMin, handbrakeMax, -500, 2553);
+  handbrake = constrain(handbrake, 0, 1023);
+  Joystick.setRyAxis(handbrake);
+
+  // ---------- VOLANTE ----------
+  int wheel = map(encoderPos, wheelMin, wheelMax, -1307, 2330);
+  wheel = constrain(wheel, 0, 1023);
+  Joystick.setRxAxis(wheel);
+
+  // ---------- CÂMBIO ----------
+  int eixoX = analogRead(pinX);
+  int eixoY = analogRead(pinY);
+  int currentButton = -1;
+
+  if(eixoX > X1_min && eixoX < X1_max && eixoY > Y1_min && eixoY < Y1_max) currentButton = 0;
+  else if(eixoX > X2_min && eixoX < X2_max && eixoY > Y2_min && eixoY < Y2_max) currentButton = 1;
+  else if(eixoX > X3_min && eixoX < X3_max && eixoY > Y3_min && eixoY < Y3_max) currentButton = 2;
+  else if(eixoX > X4_min && eixoX < X4_max && eixoY > Y4_min && eixoY < Y4_max) currentButton = 3;
+  else if(eixoX > X5_min && eixoX < X5_max && eixoY > Y5_min && eixoY < Y5_max) currentButton = 4;
+  else if(eixoX > X6_min && eixoX < X6_max && eixoY > Y6_min && eixoY < Y6_max) currentButton = 5;
+  else if(eixoX > X7_min && eixoX < X7_max && eixoY > Y7_min && eixoY < Y7_max) currentButton = 6;
+  else if(eixoX > XR_min && eixoX < XR_max && eixoY > YR_min && eixoY < YR_max) currentButton = 7;
+
+  if(currentButton != lastButton) {
+    if(millis() - lastChange > debounceTime) {
+      for(int i=0; i<8; i++) Joystick.setButton(i, 0);
+      if(currentButton != -1) Joystick.setButton(currentButton, 1);
+
+      lastButton = currentButton;
+      lastChange = millis();
+    }
+  }
+
+  // ---------- BOTÕES FÍSICOS ----------
+  for (int i = 0; i < 5; i++) {
+    int state = !digitalRead(buttonPins[i]); // ativo em LOW
+    Joystick.setButton(8 + i, state);        // botões 8 a 12
+  }
+
+  // ---------- IGNIÇÃO ----------
+  int ignitionState = digitalRead(IGNITION_PIN); // ativo em HIGH
+  Joystick.setButton(13, ignitionState);         // botão 13
+
+  delay(5);
+}
+
+// ---------- INTERRUPÇÃO DO ENCODER ----------
+void updateEncoder() {
+  int MSB = digitalRead(ENCODER_PIN_A);
+  int LSB = digitalRead(ENCODER_PIN_B);
+
+  int encoded = (MSB << 1) | LSB;
+  int sum = (lastEncoded << 2) | encoded;
+
+  if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) encoderPos++;
+  if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) encoderPos--;
+
+  if (encoderPos > wheelMax) encoderPos = wheelMax;
+  if (encoderPos < wheelMin) encoderPos = wheelMin;
+
+  lastEncoded = encoded;
+}
